@@ -1,0 +1,93 @@
+name: ASX 200 Near-Close Shadow Forecast
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '31 12 * * 1-5'
+      timezone: 'Australia/Sydney'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: asx200-near-close-shadow
+  cancel-in-progress: false
+
+jobs:
+  publish-near-close:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Checkout Private Repository
+        uses: actions/checkout@v6
+        with:
+          repository: 'dwen168/asxscreener101'
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+          path: 'private-repo'
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'private-repo/requirements.txt'
+
+      - name: Install dependencies
+        run: |
+          cd private-repo
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run fixed-cutoff contract tests
+        run: |
+          cd private-repo
+          python -m unittest tests_py.test_asx200_hybrid
+
+      - name: Refresh cross-market factors
+        continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.ingestion.ingest_factors --period 1mo --allow-partial
+
+      - name: Hold runner until the 15:30 decision bar can be completed
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.serving.wait_for_near_close
+
+      - name: Prepare current intraday inputs with a 15:40 hard deadline
+        continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.ingestion.ingest_intraday --interval 30 --period 60d --require-cutoff 15:30 --retry-until 15:40 --retry-seconds 20 &
+          ingest_30m_pid=$!
+          python -m algo_src.ml.asx200hybrid.ingestion.ingest_intraday --interval 60 --period 5d --require-cutoff 15:00 --retry-until 15:40 --retry-seconds 20 &
+          ingest_60m_pid=$!
+          wait "$ingest_30m_pid" || true
+          wait "$ingest_60m_pid" || true
+
+      - name: Run frozen-model inference or retain daily fallback
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.serving.publish_near_close
+
+      - name: Commit shadow artifact and public forecast
+        if: always()
+        run: |
+          cd private-repo
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain public/asx200_prediction.json public/asx200_prediction_history.json public/asx200_prediction_live_evaluation.json)" ]; then
+            git add public/asx200_prediction.json public/asx200_prediction_history.json public/asx200_prediction_live_evaluation.json
+            git commit -m "chore(ml): publish ASX 200 near-close shadow [skip ci]"
+            git pull --rebase --autostash origin main
+            git push origin main
+          else
+            echo "No near-close forecast changes."
+          fi

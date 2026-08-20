@@ -1,0 +1,127 @@
+name: ASX 200 Tuesday and Thursday Training
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 17 * * 2,4'
+      timezone: 'Australia/Sydney'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: asx200-tuesday-thursday-training
+  cancel-in-progress: false
+
+jobs:
+  train-asx200:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout Private Repository
+        uses: actions/checkout@v6
+        with:
+          repository: 'dwen168/asxscreener101'
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+          path: 'private-repo'
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'private-repo/requirements.txt'
+
+      - name: Install dependencies
+        run: |
+          cd private-repo
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run ASX 200 model tests
+        run: |
+          cd private-repo
+          python -m unittest tests_py.test_asx200_hybrid
+
+      - name: Refresh ASX model history and market factors
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.ingestion.ingest_factors --period 1mo --allow-partial
+          python -m algo_src.ml.asx200hybrid.ingestion.ingest_factors --period 1mo --factor asx200
+
+      - name: Backfill point-in-time macro releases
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.ingestion.ingest_macro
+
+      - name: Refresh accumulated near-close observations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.ingestion.ingest_intraday --interval 30 --period 60d
+          python -m algo_src.ml.asx200hybrid.ingestion.ingest_intraday --interval 60 --period 730d
+
+      - name: Train and evaluate research model
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.serving.train
+
+      - name: Run macro regime diagnostics
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.experiments.macro_regime_experiment
+
+      - name: Run macro feature experiment
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.experiments.macro_feature_experiment
+
+      - name: Run intraday model experiment
+        timeout-minutes: 90
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.experiments.intraday_experiment --period 730d --interval 60m
+
+      - name: Run Bollinger event-study diagnostics
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.experiments.bollinger_event_study
+
+      - name: Retrain and evaluate the frozen near-close shadow
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.experiments.near_close_experiment
+
+      - name: Commit retrained artifacts
+        run: |
+          cd private-repo
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ -n "$(git status --porcelain algo_src/ml/asx200hybrid/artifacts/)" ]; then
+            git add algo_src/ml/asx200hybrid/artifacts/
+            git commit -m "chore(ml): retrain ASX 200 models [skip ci]"
+            git pull --rebase --autostash origin main
+            git push origin main
+          else
+            echo "No ASX 200 training changes."
+          fi

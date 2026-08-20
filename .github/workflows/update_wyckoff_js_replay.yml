@@ -1,0 +1,85 @@
+name: Update Wyckoff JS Replay
+
+on:
+  workflow_dispatch:
+    inputs:
+      market:
+        description: Market to replay
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - asx
+          - ashare
+      lookback_years:
+        description: Point-in-time observation lookback in years
+        required: true
+        default: '5'
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-wyckoff-js-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout Private Repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'dwen168/asxscreener101'
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+          path: 'private-repo'
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: 'private-repo/package-lock.json'
+
+      - name: Install dependencies
+        run: |
+          cd private-repo
+          npm ci
+
+      - name: Run tests
+        run: |
+          cd private-repo
+          npm test
+
+      - name: Replay ASX
+        if: inputs.market == 'both' || inputs.market == 'asx'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          npm run replay:wyckoff:js -- --market ASX --lookback-years "${{ inputs.lookback_years || '5' }}" --persist-registry
+
+      - name: Replay A-share
+        if: inputs.market == 'both' || inputs.market == 'ashare'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          npm run replay:wyckoff:js -- --market ASHARE --lookback-years "${{ inputs.lookback_years || '5' }}" --persist-registry
+
+      - name: Commit immutable replay evidence
+        run: |
+          cd private-repo
+          if git diff --quiet -- public/backtest_wyckoff_replay_versions.json 'public/backtest_wyckoff_replay_*.json'; then
+            echo "Wyckoff replay evidence is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/backtest_wyckoff_replay_versions.json 'public/backtest_wyckoff_replay_*.json'
+          git commit -m "data: publish Wyckoff JS point-in-time replay"
+          git push
