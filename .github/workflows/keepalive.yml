@@ -1,0 +1,40 @@
+name: Weekly Repository Keepalive
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 9 * * 0'
+      timezone: 'Australia/Sydney'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly-repository-keepalive
+  cancel-in-progress: false
+
+jobs:
+  update-count-date:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Record today's Sydney date
+        env:
+          TZ: Australia/Sydney
+        run: date '+%Y-%m-%d' > count.txt
+
+      - name: Commit and push the keepalive update
+        run: |
+          if git diff --quiet -- count.txt; then
+            echo "count.txt is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add count.txt
+          git commit -m "chore: weekly repository keepalive"
+          git pull --rebase origin main
+          git push origin main
