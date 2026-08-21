@@ -3,7 +3,7 @@ name: ASX 200 Morning Daily Fallback
 on:
   workflow_dispatch:
   schedule:
-    - cron: '1 8 * * 1-5'
+    - cron: '38 8 * * 1-5'
       timezone: 'Australia/Sydney'
 
 permissions:

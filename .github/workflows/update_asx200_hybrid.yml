@@ -3,7 +3,7 @@ name: ASX 200 Tuesday and Thursday Training
 on:
   workflow_dispatch:
   schedule:
-    - cron: '15 17 * * 2,4'
+    - cron: '18 17 * * 2,4'
       timezone: 'Australia/Sydney'
 
 permissions:

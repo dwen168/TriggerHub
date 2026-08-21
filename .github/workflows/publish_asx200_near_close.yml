@@ -3,7 +3,7 @@ name: ASX 200 Near-Close Shadow Forecast
 on:
   workflow_dispatch:
   schedule:
-    - cron: '31 12 * * 1-5'
+    - cron: '31 13 * * 1-5'
       timezone: 'Australia/Sydney'
 
 permissions:
