@@ -48,6 +48,13 @@ jobs:
           cd private-repo
           python -m algo_src.ml.asx200hybrid.serving.wait_for_near_close --hour 9 --minute 43
 
+      - name: Fetch and verify the latest completed ASX close
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          cd private-repo
+          python -m algo_src.ml.asx200hybrid.ingestion.ingest_factors --period 1mo --factor asx200
+
       - name: Fetch and verify the completed US close snapshot
         continue-on-error: true
         env:
