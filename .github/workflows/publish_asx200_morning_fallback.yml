@@ -3,8 +3,9 @@ name: ASX 200 Morning Daily Fallback
 on:
   workflow_dispatch:
   schedule:
-    - cron: '38 8 * * 1-5'
-      timezone: 'Australia/Sydney'
+    # 21:38 UTC on Sunday-Thursday is 07:38 AEST / 08:38 AEDT on the
+    # following Sydney weekday. Start early and hold the runner until 09:43.
+    - cron: '38 21 * * 0-4'
 
 permissions:
   contents: write

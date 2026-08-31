@@ -3,8 +3,9 @@ name: ASX 200 Near-Close Shadow Forecast
 on:
   workflow_dispatch:
   schedule:
-    - cron: '31 13 * * 1-5'
-      timezone: 'Australia/Sydney'
+    # 02:31 UTC is 12:31 AEST / 13:31 AEDT. This deliberately starts the
+    # runner early enough to hold it through the fixed 15:35 Sydney cutoff.
+    - cron: '31 2 * * 1-5'
 
 permissions:
   contents: write
