@@ -2,13 +2,12 @@ name: Daily ASX and A-share Market Update
 
 on:
   schedule:
-    # 两个市场均收盘后只执行一次，避免盘前和盘中重复全量读写数据库。
     - cron: '10 18 * * 1-5'
       timezone: 'Australia/Sydney'
-  workflow_dispatch: # 支持在 GitHub Web UI 上手动点击触发运行
+  workflow_dispatch:
 
 permissions:
-  contents: write # 必须赋予写权限才能将更新后的数据 push 回仓库
+  contents: write
 
 jobs:
   update-data:
@@ -26,33 +25,45 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-          cache: 'pip' # 缓存 pip 依赖加速构建
+          cache: 'pip'
           cache-dependency-path: 'private-repo/requirements.txt'
 
       - name: Install dependencies
+        working-directory: private-repo
         run: |
-          cd private-repo
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Analysis Engine
+      - name: Run ASX Analysis
+        working-directory: private-repo
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ASXSCREENER_ALGO_VERSION: v2.0.0-d595ea3eb1b9-d1fc40605a24
           RUN_HEAVY_ANALYSIS: 'true'
-        run: |
-          cd private-repo
-          python algo_src/analysis_engine.py
-          python algo_src/analysis_engine.py --ashare
-          python algo_src/public_artifacts.py public
+          PYTHONUNBUFFERED: '1'
+        run: python algo_src/analysis_engine.py
+
+      - name: Run A-share Analysis
+        working-directory: private-repo
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ASXSCREENER_ALGO_VERSION: v2.0.0-d595ea3eb1b9-d1fc40605a24
+          RUN_HEAVY_ANALYSIS: 'true'
+          PYTHONUNBUFFERED: '1'
+        run: python algo_src/analysis_engine.py --ashare
+
+      - name: Compact public artifacts
+        working-directory: private-repo
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: python algo_src/public_artifacts.py public
 
       - name: Commit and push changes
+        working-directory: private-repo
         run: |
-          cd private-repo
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
-          # 检查 public/ 目录下文件是否有变动，避免没有变动时 commit 报错
+
           if [ -n "$(git status --porcelain public/)" ]; then
             git add public/
             git commit -m "chore: auto-update real-time market and backtest data [skip ci]"
